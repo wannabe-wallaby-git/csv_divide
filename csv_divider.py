@@ -3,12 +3,19 @@
 import wx
 import os
 import sys
-import win32com.client
 import datetime
 
 # 固定値
 WIN_NAME = '[v1]ツール名称'
 DIVIDE_NUM = 1000000
+
+PROC_MODE = 3
+if PROC_MODE == 1:
+    import xlwings
+elif PROC_MODE == 2:
+    import openpyxl
+elif PROC_MODE == 3:
+    import win32com.client
 
 class FileDropTarget(wx.FileDropTarget):
     """
@@ -83,16 +90,18 @@ class App(wx.Frame):
         if os.path.splitext(path)[1] == '.csv':
             start_time = datetime.datetime.now()
             if self.mode == 1:
-                msg = '[{0}] 処理を開始しました。{1}以下のファイルを処理しています。{1}{2}'
-                self.txt_drop.SetValue(msg.format(str(start_time), os.linesep, os.path.basename(path)))
+                msg = '[{0}] 処理を開始しました。{1}以下のファイルを処理しています。{1}{2}'.format(str(start_time), os.linesep, os.path.basename(path))
+                self.txt_drop.SetValue(msg)
                 self.txt_drop.SetBackgroundColour('#55FF55')
                 self.Refresh()
-            
-            # csvファイル読み込み（newlineを省略⇒改行コード：\n）
+
+            # csvファイルの読み込み
             with open(path, mode='r') as csv_file:
                 content = csv_file.read()
 
             lines = [s.split(',') for s in content.split('\n')]
+            if lines[-1] == ['']:
+                lines = lines[:-1]
             line_num = len(lines)
             if type(lines[0]) == str:
                 cols = 1
@@ -100,47 +109,127 @@ class App(wx.Frame):
             else:
                 cols = len(lines[0])
 
-            # Excelアプリケーションを起動しcsvデータを貼り付ける
-            xl = win32com.client.Dispatch("Excel.Application")
-            xl.Visible = True
-            wb = xl.Workbooks.Add()
-            wb_name = wb.name
-            while wb.Worksheets.count > 1:
-                wb.Worksheets[0].Delete()
-            ws = wb.Worksheets[0]
-            ws.Name = '1'
-
             div_num = line_num // DIVIDE_NUM
 
             add_num = 1 if line_num % DIVIDE_NUM == 0 else 2
 
-            for i in range(1, div_num + add_num):
+            ########################################################################
+            ### xlwings ############################################################
+            ########################################################################
+            if PROC_MODE == 1:
+                app = xlwings.App()
+                app.visible = True
+                wb = app.books[0]
 
-                data_offset_from = (i - 1) * DIVIDE_NUM
-                if i == div_num + add_num :
-                    rows = line_num % DIVIDE_NUM
-                else:
-                    rows = DIVIDE_NUM
-                data_offset_to = data_offset_from + rows
+                sht = wb.sheets.active
+                sht.name = '1'
+                offset = 0
+                sheet_num = 0
 
-                if len(lines[data_offset_from : data_offset_to]) > 0 and lines[data_offset_from : data_offset_to]:
+                while True:
+                    sheet_num += 1
+                    if sheet_num != 1:
+                        sht = wb.sheets.add(name=str(sheet_num), after=sht)
 
-                    # 次のシートを追加
-                    if i != 1:
-                        ws = wb.Worksheets.Add(Before=None, After=ws)
-                        ws.Name = str(i)
+                    if offset + DIVIDE_NUM > line_num:
+                        offset_add = line_num % DIVIDE_NUM
+                    else:
+                        offset_add = DIVIDE_NUM
 
-                    try:
-                        ws.Range(ws.Cells(1,1), ws.Cells(rows, cols)).Value = lines[data_offset_from : data_offset_to]
-                    except Exception as e:
-                        print(e)
+                    if len(lines[offset : offset + offset + offset_add]) > 0:
+                        sht.range('A1').value = lines[offset : offset + offset_add]
 
-            # 最初のシートを表示
-            wb.Worksheets('1').Activate()
+                    offset += DIVIDE_NUM
+
+                    if offset > line_num:
+                        break
+
+                wb_name = wb.name
+            ########################################################################
+
+            ########################################################################
+            ### openpyxl ###########################################################
+            ########################################################################
+            elif PROC_MODE == 2:
+                book = openpyxl.Workbook()
+                sheet = book.active
+                sheet.title = '1'
+                offset = 0
+                sheet_num = 0
+
+                while True:
+                    sheet_num += 1
+                    if sheet_num != 1:
+                        sheet = book.create_sheet(title=str(sheet_num))
+
+                    if offset + DIVIDE_NUM > line_num:
+                        offset_add = line_num % DIVIDE_NUM -1
+                    else:
+                        offset_add = DIVIDE_NUM
+
+                    if len(lines[offset : offset + offset_add]) > 0:
+                        for index, line in enumerate(lines[offset : offset + offset_add]):
+                            sheet.append(line)
+                            if index % 100000 == 0:
+                                print(offset, index)
+                    offset += DIVIDE_NUM
+
+                    if offset > line_num:
+                        break
+                    
+                wb_name = r"C:\Users\wanna\OneDrive\ドキュメント\work\10_プログラミング\01_Python\10_wxpython\dist\save.xlsx"
+                book.save(wb_name)
+                book.close()
+            ########################################################################
+
+            ########################################################################
+            ### pywin32com #########################################################
+            ########################################################################
+            elif PROC_MODE == 3:
+                # Excelアプリケーションを起動しcsvデータを貼り付ける
+                xl = win32com.client.Dispatch("Excel.Application")
+                xl.Visible = True
+                wb = xl.Workbooks.Add()
+                wb_name = wb.Name
+                while wb.Worksheets.Count > 1:
+                    wb.Worksheets(1).Delete()
+                ws = wb.Worksheets(1)
+                ws.Name = '1'
+
+                for i in range(1, div_num + add_num):
+
+                    data_offset_from = (i - 1) * DIVIDE_NUM
+                    if i == div_num + add_num :
+                        rows = line_num % DIVIDE_NUM
+                    else:
+                        rows = DIVIDE_NUM
+                    data_offset_to = data_offset_from + rows
+
+                    if len(lines[data_offset_from : data_offset_to]) > 0 and lines[data_offset_from : data_offset_to]:
+
+                        # 次のシートを追加
+                        if i != 1:
+                            ws = wb.Worksheets.Add(Before=None, After=ws)
+                            ws.Name = str(i)
+
+                        try:
+                            ws.Range(ws.Cells(1,1), ws.Cells(rows, cols)).Value = lines[data_offset_from : data_offset_to]
+                        except Exception as e:
+                            print(e)
+
+                # 最初のシートを表示
+                xl.Visible = True
+                wb.Worksheets('1').Activate()
+            ########################################################################
+
+
+
+
+
 
             end_time = datetime.datetime.now()
             if self.mode == 1:
-                msg = '[{0}] 処理を終了しました。{1}Excelの新規ファイル[{2}]を作成しました。{1}{1}{3}'
+                msg += '\n' + '[{0}] 処理を終了しました。{1}Excelの新規ファイル[{2}]を作成しました。{1}{1}{3}'
                 
                 self.txt_drop.SetValue(msg.format(str(end_time), os.linesep, wb_name ,'ここにcsvファイルをドロップしてください。'))
                 self.txt_drop.SetBackgroundColour('#CCCCCC')
@@ -165,8 +254,15 @@ def app_start():
 
 if __name__ == '__main__':
     if len(sys.argv) > 1:
-        app = App(mode=0)
-        app.ProcTargetFile(sys.argv[1])
+        # app = App(mode=0)
+        # app.ProcTargetFile(sys.argv[1])
+        app = wx.App()
+        frm = App(mode=1)
+        frm.CreateWindow(None, wx.ID_ANY, WIN_NAME)
+        frm.Show()
+        frm.ProcTargetFile(sys.argv[1])
+        app.Destroy()
+
     else:
         app = wx.App()
         frm = App(mode=1)
